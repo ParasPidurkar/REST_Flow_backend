@@ -1,0 +1,10 @@
+[
+    { 
+      "name": "seller-account", 
+      "address":"01cf0e2f2f715450" 
+    },
+    {
+       "name": "buyer-account",
+       "address": "179b6b1cb6755e31"
+    }
+  ]
