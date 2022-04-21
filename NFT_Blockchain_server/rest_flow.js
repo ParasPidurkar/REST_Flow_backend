@@ -1,13 +1,12 @@
 const express = require('express');
+const config = require('getconfig')
 const Joi = require('joi'); //used for validation
 var exec = require('child_process').exec, child;
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/imgs', express.static('imgs'));
-//app.use('/videos', express.static('imgs'));
 
-//const routes = require('./routes')(app);
 const cors = require('cors');
 app.use(cors());
 const fs =require('fs');
@@ -82,7 +81,7 @@ app.post('/api/createUserAccount',(req,res) =>{
                             StopIndex =  /*strOut.indexOf('Balance')*/ StartIndex+17;
                             accAddress=strOut.substring(StartIndex+1,StopIndex);
                             console.log("user address  :-"+accAddress)
-
+                            hexAccountAddress= "0x"+accAddress
                             //open the JSON file and update the new user
                             const flow_json = require("./flow");
                             console.log("parameters to update")
@@ -101,7 +100,7 @@ app.post('/api/createUserAccount',(req,res) =>{
                             var myObject = flow_json;
                             //var myObject = JSON.parse(data);
                             // Adding the new data to our object
-                            myObject["accounts"][username] = {address:accAddress,keys:userPrivateKey};
+                            myObject["accounts"][username] = {address:hexAccountAddress,keys:userPrivateKey};
                             console.log(myObject)
                             // Writing to our JSON file
                             var newData2 = JSON.stringify(myObject);
@@ -181,32 +180,131 @@ app.post('/api/createUserAccount',(req,res) =>{
 
     
 })
- 
-app.get('/api/listall', (req, res) => {
 
-    console.log("get listAll:-getting the asset data from Blockchain")
-    var dataAllAsset = [];
-    var TotalNFT =0;
-    var SignalNFT =0;
-    // 1. read the flow.json top get all users
-    const flow_json = require("./flow");
-    //console.log(flow_json);
-    const accounts  = flow_json.accounts
-    console.log(accounts);
-    let count = Object.keys(accounts).length
-    const keys = Object.keys(accounts);
-    for (let i = 0; i < keys.length; i++) //check all the accounts from flow.json
-    //
+
+
+
+function waitforAssetEmit(inft,tokenID,accounts_address,key,res) {
+                                
+    //console.log("Emitting  the listall call")
+    //client.emit('FlowAssetData',{data:dataAllAsset})
+ console.log("waitforAssetEmit =entered"+inft)
+var NFTIDloc= tokenID[inft];
+console.log(tokenID[inft])
+var getRewardIdCmd = 'flow scripts execute ./scripts/rewards/get_nft_rewardID.cdc '+accounts_address+' '+tokenID[inft];
+console.log(getRewardIdCmd)
+var exec = require('child_process').exec, child;
+child = exec(getRewardIdCmd,
+function (error, stdout, stderr)
+{				
+    if(error)
     {
-        const key = keys[i];
+        console.log(getRewardIdCmd)
+        console.log('Issue in getting the REWARDID data for the user : ' + error);
+    }
+    else
+    {
+
+        //TODO resolve Issue in updating all the asset 
+        //currently the code is working for 1 NFT per asset
+        console.log('updating the db for the token/NFT ID'+NFTIDloc);
+        var REWARDID;
+        var numb = stdout.match(/\d/g);
+        numb = parseInt(numb.join(""));
+        console.log("Data to be updated in the database"+numb+'\t'+accounts_address+'\t'+NFTIDloc)
+        db.each(`UPDATE users SET inRewardId = ${numb} WHERE inNFTId = ${tokenID[inft]}`, function(err, row) {
+            console.log("updating the reward id ")
+        });
+        REWARDID =numb;
+        console.log("REWARDID local"+REWARDID)
+
+        //we got the NFT ID now get the aset data and update the db
+
+            var getmetadataCmd = 'flow scripts execute ./scripts/rewards/get_metadata.cdc '+accounts_address+' '+NFTIDloc;
+            console.log(getmetadataCmd)
+            var exec = require('child_process').exec, child;
+            child = exec(getmetadataCmd,
+            function (error, stdout, stderr)
+            {		
+                retStdOut = stdout;		
+                if(error){
+                    console.log('Issue in getting the asset data: ' + error);
+                    }
+                    else
+                    {   
+                        //var time_interval = 2000*i; 
+                        //setTimeout(() => {console.log("never happens")
+                        index  = stdout.indexOf('Result'),
+                        strOut = stdout.substr(index);
+                        //tokenStartIndex = strOut.indexOf('"');
+                        //tokenStopIndex =  strOut.indexOf('"')
+                        var tokenStartIndex = strOut.indexOf('"');           // 3
+                        var tokenStopIndex = strOut.indexOf('"', tokenStartIndex + 1);
+                        Assetmetadata=strOut.substring(tokenStartIndex+1,tokenStopIndex);
+                        console.log("Assetmetadata :- "+Assetmetadata+"  rewardID:-  "+REWARDID)
+
+                        //const str = 'movie-2#50#10#//backendserver/storage/movie3.jpg';
+                        const [Ctitle,Ccost,Cduration,Cthumbnail,Cgenre,Ccast,Cratings] = Assetmetadata.split('#');
+                        thumbnailurl=`http://${config.server.ip}:${config.server.port}/imgs/${Cthumbnail}`
+                        console.log("Movie Title: "+Ctitle); 
+                        console.log("Cost :"+Ccost)
+                        console.log("Duration"+Cduration); 
+                        console.log("thumbnail"+Cthumbnail)
+                        console.log("genre"+Cgenre)
+                        console.log("cast"+Ccast)
+                        console.log("ratings"+Cratings)
+                        //TODOget the Asset meta data store it in JSON array and send back to main server
+                        var Asset = {title: Ctitle, cost: parseInt(Ccost), duration: parseInt(Cduration), thumbnail: thumbnailurl,genre:Cgenre,cast:Ccast,ratings:parseInt(Cratings), user: key, nftendpoint : NFTIDloc};
+                        
+                        db.run(`INSERT OR REPLACE INTO users(insUserName,insUserAccount,inRewardId,inNFTId,inAsset)
+                        VALUES("${key}","${accounts_address}","${REWARDID}","${NFTIDloc}","${Assetmetadata}")`, (err) => {
+                        if (err) 
+                        {
+                            console.log(err);
+                            throw err;
+                        }
+                        });
+                        //res.send(feed)  //sending the data 1 at a time  
+                    //}, time_interval);   
+                     dataAllAsset.push(Asset);
+                     SignalNFT =SignalNFT +1;
+                     {
+                        console.log(TotalNFT,SignalNFT,ginstance,(keys.length-1));
+                        if((TotalNFT == SignalNFT)&&(ginstance == (keys.length-1)))
+                        {
+                            console.log("listall data sent")
+                            res.send(dataAllAsset);
+                          //  break;
+                        }
+                        
+                        }
+                    }	
+            });
+        //then insert the data in the DB
+
+    }	
+});
+
+}
+var TotalNFT =0;
+var SignalNFT =0;
+var keys;
+var ginstance
+
+function checkAccounts(key,accounts,res)
+{
         // var account_address = accounts[key].address
         if (key.match("emulator-account")  || key.match("testnet-deployer")|| key.match("testnet-user") || key.match("buyer"))
         {
             console.log(" Not sellers account -hence ignore it")
+            if( (TotalNFT == 0) && (ginstance ==( keys.length)-1)){
+                    res.send("No NFT Items for Sale");
+                }
         }
         else
         {
             //log the sellers account.
+            console.log("Listing al the acounts and their account address")
             console.log(key,accounts[key].address);
             // get the sellers marketplace nft.
             var MarketPlaceCmd ="flow scripts execute ./scripts/marketplace/get_collection_ids.cdc --arg Address:" +accounts[key].address  ;
@@ -227,7 +325,7 @@ app.get('/api/listall', (req, res) => {
 
                             var empty=""
                             //here run the command and get response for RewardId and userasset and update
-                            account_address =(accounts[key].address).slice(2);
+                            var account_address =(accounts[key].address).slice(2);
                             console.log("Account address for flow"+account_address)
                             console.log("token for flow command"+token)
                             var tokenID = token;
@@ -247,109 +345,10 @@ app.get('/api/listall', (req, res) => {
                             console.log("Total NFT:"+TotalNFT);
                         
                             //console.log("getting the REWARDID and metadata for NFTID"+NFTIDloc)
-                            function waitforAssetEmit(i) {
-                                //console.log("Emitting  the listall call")
-                                //client.emit('FlowAssetData',{data:dataAllAsset})
-                             console.log("waitforAssetEmit =entered")
-                            var NFTIDloc= tokenID[i];
-                            console.log(tokenID[i])
-                            var getRewardIdCmd = 'flow scripts execute ./scripts/rewards/get_nft_rewardID.cdc '+account_address+' '+tokenID[i];
-                            console.log(getRewardIdCmd)
-                            var exec = require('child_process').exec, child;
-                            child = exec(getRewardIdCmd,
-                            function (error, stdout, stderr)
-                            {				
-                                if(error)
-                                {
-                                    console.log(getRewardIdCmd)
-                                    console.log('Issue in getting the REWARDID data for the user : ' + error);
-                                }
-                                else
-                                {
 
-                                    //TODO resolve Issue in updating all the asset 
-                                    //currently the code is working for 1 NFT per asset
-                                    console.log('updating the db for the token/NFT ID'+NFTIDloc);
-                                    var REWARDID;
-                                    var numb = stdout.match(/\d/g);
-                                    numb = parseInt(numb.join(""));
-                                    console.log("Data to be updated in the database"+numb+'\t'+accounts[key].address+'\t'+NFTIDloc)
-                                    db.each(`UPDATE users SET inRewardId = ${numb} WHERE inNFTId = ${tokenID[i]}`, function(err, row) {
-                                        console.log("updating the reward id ")
-                                    });
-                                    REWARDID =numb;
-                                    console.log("REWARDID local"+REWARDID)
-
-                                    //we got the NFT ID now get the aset data and update the db
-                                        var getmetadataCmd = 'flow scripts execute ./scripts/rewards/get_metadata.cdc '+account_address+' '+NFTIDloc;
-                                        console.log(getmetadataCmd)
-                                        var exec = require('child_process').exec, child;
-                                        child = exec(getmetadataCmd,
-                                        function (error, stdout, stderr)
-                                        {		
-                                            retStdOut = stdout;		
-                                            if(error){
-                                                console.log('Issue in getting the asset data: ' + error);
-                                                }
-                                                else
-                                                {   
-                                                    //var time_interval = 2000*i; 
-                                                    //setTimeout(() => {console.log("never happens")
-                                                    index  = stdout.indexOf('Result'),
-                                                    strOut = stdout.substr(index);
-                                                    //tokenStartIndex = strOut.indexOf('"');
-                                                    //tokenStopIndex =  strOut.indexOf('"')
-                                                    var tokenStartIndex = strOut.indexOf('"');           // 3
-                                                    var tokenStopIndex = strOut.indexOf('"', tokenStartIndex + 1);
-                                                    Assetmetadata=strOut.substring(tokenStartIndex+1,tokenStopIndex);
-                                                    console.log("Assetmetadata :- "+Assetmetadata+"  rewardID:-  "+REWARDID)
-
-                                                    //const str = 'movie-2#50#10#//backendserver/storage/movie3.jpg';
-                                                    const [Ctitle,Ccost,Cduration,Cthumbnail,Cgenre,Ccast,Cratings] = Assetmetadata.split('#');
-
-                                                    console.log("Movie Title: "+Ctitle); 
-                                                    console.log("Cost :"+Ccost)
-                                                    console.log("Duration"+Cduration); 
-                                                    console.log("thumbnail"+Cthumbnail)
-                                                    console.log("genre"+Cgenre)
-                                                    console.log("cast"+Ccast)
-                                                    console.log("ratings"+Cratings)
-                                                    //TODOget the Asset meta data store it in JSON array and send back to main server
-                                                    var Asset = {title: Ctitle, cost: parseInt(Ccost), duration: parseInt(Cduration), thumbnail: Cthumbnail,genre:Cgenre,cast:Ccast,ratings:parseInt(Cratings), user: key, nftendpoint : NFTIDloc};
-                                                    
-                                                    db.run(`INSERT OR REPLACE INTO users(insUserName,insUserAccount,inRewardId,inNFTId,inAsset)
-                                                    VALUES("${key}","${accounts[key].address}","${REWARDID}","${NFTIDloc}","${Assetmetadata}")`, (err) => {
-                                                    if (err) 
-                                                    {
-                                                        console.log(err);
-                                                        throw err;
-                                                    }
-                                                    });
-                                                    //res.send(feed)  //sending the data 1 at a time  
-                                                //}, time_interval);   
-                                                 dataAllAsset.push(Asset);
-                                                 SignalNFT =SignalNFT +1;
-                                                 {
-                                                    console.log(TotalNFT,SignalNFT);
-                                                    if(TotalNFT == SignalNFT)
-                                                    {
-                                                        console.log("listall data sent")
-                                                        res.send(dataAllAsset);
-                                                      //  break;
-                                                    }
-                                                    
-                                                    }
-                                                }	
-                                        });
-                                    //then insert the data in the DB
-
-                                }	
-                            });
-                            
-                            }
-                            for (var i = 0; i < tokenID.length; i++) 
+                            for (var i1 = 0; i1 < tokenID.length; i1++) 
                             {                                
-                                waitforAssetEmit(i);
+                                waitforAssetEmit(i1,tokenID,account_address,key,res);
                             } //multi NFT 
                           // console.log("Asset in Marketplace\n"+JSON.stringify(AssetinMarketplace))
                         //} 
@@ -359,7 +358,7 @@ app.get('/api/listall', (req, res) => {
                     }
                     else
                     { 
-                        if( (TotalNFT == 0) && (i == keys.length))
+                        if( (TotalNFT == 0) && (ginstance ==( keys.length)-1))
                             res.send("No NFT Items for Sale");
                     } 
                 
@@ -367,6 +366,27 @@ app.get('/api/listall', (req, res) => {
 
             });            
         }
+}
+
+app.get('/api/listall', (req, res) => {
+
+    console.log("get listAll:-getting the asset data from Blockchain")
+    var dataAllAsset = [];
+    TotalNFT =0;
+    SignalNFT =0;
+    // 1. read the flow.json top get all users
+    const flow_json = require("./flow");
+    //console.log(flow_json);
+    const accounts  = flow_json.accounts
+    console.log(accounts);
+    let count = Object.keys(accounts).length
+     keys = Object.keys(accounts);
+    for (let i = 0; i < keys.length; i++) //check all the accounts from flow.json
+    //
+    {
+        ginstance = i;
+        const key = keys[i];
+        checkAccounts(key,accounts,res);
         
     }
    
